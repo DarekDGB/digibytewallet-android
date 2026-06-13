@@ -314,15 +314,28 @@ fun SendScreen(
             }
         }
 
-        if (sendState is SendState.Error) {
-            Spacer(modifier = Modifier.height(12.dp))
-            Text(
-                text = (sendState as SendState.Error).message,
-                style = MaterialTheme.typography.bodySmall,
-                color = DigiByteRed,
-                textAlign = TextAlign.Center,
-                modifier = Modifier.fillMaxWidth()
-            )
+        when (val state = sendState) {
+            is SendState.Error -> {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = state.message,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = DigiByteRed,
+                    textAlign = TextAlign.Center,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            is SendState.AdamantineDenied,
+            is SendState.AdamantineHumanConfirmationRequired -> {
+                Spacer(modifier = Modifier.height(12.dp))
+                AdamantineSendProtectionCard(
+                    sendState = state,
+                    modifier = Modifier.fillMaxWidth()
+                )
+            }
+
+            else -> Unit
         }
     }
 }
