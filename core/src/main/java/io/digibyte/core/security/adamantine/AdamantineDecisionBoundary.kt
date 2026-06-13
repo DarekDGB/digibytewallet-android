@@ -146,34 +146,21 @@ object AdamantineWalletAdapterInvariants {
 object AdamantineExecutionResponseMapper {
     /**
      * Maps AdamantineOS execution_response_v2-shaped data into the wallet's
-     * smaller local decision model. Unknown or malformed shapes fail closed.
+     * smaller local decision model. Unknown, malformed, non-registry, or
+     * contract-drifting shapes fail closed before any allow/deny mapping.
      */
     fun fromExecutionResponseV2(payload: Map<String, Any?>): AdamantineDecision {
-        val version = payload["v"] as? String
-            ?: return AdamantineDecision.deny(REASON_ADAMANTINEOS_RESPONSE_INVALID)
-
-        if (version != "execution_response_v2") {
+        val validation = AdamantineExecutionResponseV2Validator.validate(payload)
+        if (!validation.valid) {
             return AdamantineDecision.deny(REASON_ADAMANTINEOS_RESPONSE_INVALID)
         }
 
-        val status = payload["status"] as? String
-            ?: return AdamantineDecision.deny(REASON_ADAMANTINEOS_RESPONSE_INVALID)
-
-        val reasonId = payload["reason_id"] as? String
-            ?: return AdamantineDecision.deny(REASON_ADAMANTINEOS_RESPONSE_INVALID)
-
-        val contextHash = payload["context_hash"] as? String
-
-        val decision = payload["decision"] as? Map<*, *>
-            ?: return AdamantineDecision.deny(
-                reasonId.ifBlank { REASON_ADAMANTINEOS_RESPONSE_INVALID },
-                contextHash
-            )
-
-        val allowed = decision["allowed"] as? Boolean
-            ?: return AdamantineDecision.deny(REASON_ADAMANTINEOS_RESPONSE_INVALID, contextHash)
-
-        val artifacts = payload["artifacts"] as? Map<*, *> ?: emptyMap<Any?, Any?>()
+        val status = payload["status"] as String
+        val reasonId = payload["reason_id"] as String
+        val contextHash = payload["context_hash"] as String
+        val decision = payload["decision"] as Map<*, *>
+        val allowed = decision["allowed"] as Boolean
+        val artifacts = (payload["artifacts"] as? Map<*, *>) ?: emptyMap<Any?, Any?>()
         val finalPolicyState = extractFinalPolicyState(artifacts)
 
         if (finalPolicyState == FINAL_POLICY_HUMAN_REVIEW_REQUIRED) {
@@ -205,7 +192,7 @@ object AdamantineExecutionResponseMapper {
             }
 
             "deny", "error" -> AdamantineDecision.deny(
-                reasonId = reasonId.ifBlank { REASON_ADAMANTINEOS_RESPONSE_INVALID },
+                reasonId = reasonId,
                 contextHash = contextHash,
                 finalPolicyState = finalPolicyState,
                 artifacts = artifacts.toStringKeyMap()
