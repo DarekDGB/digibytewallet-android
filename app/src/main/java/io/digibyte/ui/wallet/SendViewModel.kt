@@ -21,6 +21,16 @@ sealed class SendState {
     data object Sending : SendState()
     data class Success(val txid: String) : SendState()
     data class Error(val message: String) : SendState()
+
+    data class AdamantineDenied(
+        val reasonId: String,
+        val message: String
+    ) : SendState()
+
+    data class AdamantineHumanConfirmationRequired(
+        val reasonId: String,
+        val message: String
+    ) : SendState()
 }
 
 /** Fee tiers in sat/KB. Used as fallback when native returns 0. */
@@ -33,51 +43,39 @@ class SendViewModel @Inject constructor(
     private val priceProvider: PriceProvider
 ) : ViewModel() {
 
-    /** Destination address — validated on change. */
     val address = MutableStateFlow("")
 
-    /** Is the current address valid? */
-    private val _addressValid = MutableStateFlow<Boolean?>(null) // null = not yet validated
+    private val _addressValid = MutableStateFlow<Boolean?>(null)
     val addressValid: StateFlow<Boolean?> = _addressValid.asStateFlow()
 
-    /** Amount in DGB (user text input). */
     val amountDgb = MutableStateFlow("")
 
-    /** Amount in fiat (user text input or converted). Kept in sync with amountDgb. */
     val amountFiat = MutableStateFlow("")
 
-    /** 0 = high (Next Block), 1 = medium (5 min), 2 = low (Economy). */
     val selectedFeeTier = MutableStateFlow(1)
 
-    /** Estimated fee in satoshis for the selected tier. */
     val feeEstimate: StateFlow<Long> = selectedFeeTier.map { tier ->
         val native = NativeBridge.getEstimatedFee(tier)
         if (native > 0) native else FEE_DEFAULTS[tier]
     }.stateIn(viewModelScope, SharingStarted.Eagerly, FEE_DEFAULTS[1])
 
-    /** Current send flow state. */
     private val _sendState = MutableStateFlow<SendState>(SendState.Idle)
     val sendState: StateFlow<SendState> = _sendState.asStateFlow()
 
-    /** Error message for validation failures shown inline. */
     private val _validationError = MutableStateFlow<String?>(null)
     val validationError: StateFlow<String?> = _validationError.asStateFlow()
-
-    // ── Address validation ────────────────────────────────────────────────
 
     fun onAddressChanged(value: String) {
         address.value = value.trim()
         _addressValid.value = if (value.isBlank()) null
-                              else NativeBridge.isValidAddress(value.trim())
+        else NativeBridge.isValidAddress(value.trim())
         _validationError.value = null
     }
-
-    // ── Amount input ──────────────────────────────────────────────────────
 
     fun onAmountDgbChanged(value: String) {
         amountDgb.value = value
         _validationError.value = null
-        // Try to convert to fiat
+
         viewModelScope.launch {
             val dgb = value.toDoubleOrNull() ?: return@launch
             runCatching {
@@ -94,7 +92,7 @@ class SendViewModel @Inject constructor(
     fun onAmountFiatChanged(value: String) {
         amountFiat.value = value
         _validationError.value = null
-        // Try to convert to DGB
+
         viewModelScope.launch {
             val fiat = value.toDoubleOrNull() ?: return@launch
             runCatching {
@@ -109,11 +107,6 @@ class SendViewModel @Inject constructor(
         }
     }
 
-    // ── QR / URI parsing ─────────────────────────────────────────────────
-
-    /**
-     * Parse a scanned QR string (raw address or digibyte: URI) and populate fields.
-     */
     fun applyScannedUri(raw: String) {
         val uri = DigiByteUri.parse(raw) ?: return
         onAddressChanged(uri.address)
@@ -128,18 +121,12 @@ class SendViewModel @Inject constructor(
         }
     }
 
-    // ── Amount conversion helpers ─────────────────────────────────────────
-
-    /** Convert current DGB input to satoshis. Returns null if invalid. */
     fun amountSatoshis(): Long? {
         val dgb = amountDgb.value.replace(",", "").toDoubleOrNull() ?: return null
         if (dgb <= 0.0) return null
         return (dgb * 100_000_000).toLong()
     }
 
-    // ── Send flow ─────────────────────────────────────────────────────────
-
-    /** Move to the Confirming state (shows confirmation dialog). */
     fun requestConfirm() {
         val addr = address.value
         val sats = amountSatoshis()
@@ -162,28 +149,33 @@ class SendViewModel @Inject constructor(
         }
     }
 
-    /**
-     * Execute the send after biometric/pin auth succeeds.
-     * Collects spendable UTXOs then calls TransactionBuilder.
-     */
     fun send() {
         val addr = address.value
         val sats = amountSatoshis() ?: run {
             _sendState.value = SendState.Error("Invalid amount")
             return
         }
-        val feeTier = selectedFeeTier.value
         val feePerKb = feeEstimate.value
 
         _sendState.value = SendState.Sending
 
         viewModelScope.launch {
-            // Collect spendable UTXOs once
             val utxos = utxoManager.getSpendableUtxos().first()
             val result = transactionBuilder.sendTransaction(addr, sats, feePerKb, utxos)
             _sendState.value = when (result) {
                 is TxResult.Success -> SendState.Success(result.txid)
-                is TxResult.Error   -> SendState.Error(result.message)
+                is TxResult.Error -> SendState.Error(result.message)
+
+                is TxResult.AdamantineDenied -> SendState.AdamantineDenied(
+                    reasonId = result.reasonId,
+                    message = result.message
+                )
+
+                is TxResult.AdamantineHumanConfirmationRequired ->
+                    SendState.AdamantineHumanConfirmationRequired(
+                        reasonId = result.reasonId,
+                        message = result.message
+                    )
             }
         }
     }
@@ -193,14 +185,12 @@ class SendViewModel @Inject constructor(
         _validationError.value = null
     }
 
-    /** Human-readable fee tier labels. */
     fun feeTierLabel(tier: Int): String = when (tier) {
-        0    -> "Next Block"
-        1    -> "5 Minutes"
+        0 -> "Next Block"
+        1 -> "5 Minutes"
         else -> "Economy"
     }
 
-    /** sat/KB label for the tier. */
     fun feeTierSatPerKb(tier: Int): Long {
         val native = NativeBridge.getEstimatedFee(tier)
         return if (native > 0) native else FEE_DEFAULTS[tier]
