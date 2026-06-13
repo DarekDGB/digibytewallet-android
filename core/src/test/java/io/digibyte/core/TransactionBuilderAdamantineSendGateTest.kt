@@ -96,7 +96,7 @@ class TransactionBuilderAdamantineSendGateTest {
     }
 
     @Test
-    fun `deny decision stops before native create sign broadcast`() = runTest {
+    fun `deny decision returns Adamantine denied state and stops before native create sign broadcast`() = runTest {
         val native = FakeNativeGateway()
         val dao = FakeUtxoDao()
         val builder = TransactionBuilder(
@@ -116,8 +116,8 @@ class TransactionBuilderAdamantineSendGateTest {
             spendableUtxos = listOf(utxo("tx1", 150_000L))
         )
 
-        assertTrue(result is TxResult.Error)
-        assertTrue((result as TxResult.Error).message.contains("DENY_POLICY"))
+        assertTrue(result is TxResult.AdamantineDenied)
+        assertEquals("DENY_POLICY", (result as TxResult.AdamantineDenied).reasonId)
         assertEquals(0, native.createCalls)
         assertEquals(0, native.signCalls)
         assertEquals(0, native.publishCalls)
@@ -125,7 +125,7 @@ class TransactionBuilderAdamantineSendGateTest {
     }
 
     @Test
-    fun `human confirmation decision stops before native create sign broadcast`() = runTest {
+    fun `human confirmation decision returns review state and stops before native create sign broadcast`() = runTest {
         val native = FakeNativeGateway()
         val dao = FakeUtxoDao()
         val builder = TransactionBuilder(
@@ -147,8 +147,11 @@ class TransactionBuilderAdamantineSendGateTest {
             spendableUtxos = listOf(utxo("tx1", 150_000L))
         )
 
-        assertTrue(result is TxResult.Error)
-        assertTrue((result as TxResult.Error).message.contains("human confirmation"))
+        assertTrue(result is TxResult.AdamantineHumanConfirmationRequired)
+        assertEquals(
+            "DENY_POLICY",
+            (result as TxResult.AdamantineHumanConfirmationRequired).reasonId
+        )
         assertEquals(0, native.createCalls)
         assertEquals(0, native.signCalls)
         assertEquals(0, native.publishCalls)
