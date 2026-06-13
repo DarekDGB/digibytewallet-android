@@ -50,7 +50,7 @@ data class AdamantineSensitiveActionInput(
                 purpose = "recover_wallet_from_mnemonic",
                 safeFields = mapOf(
                     "creation_timestamp" to creationTimestamp.toString(),
-                    "mnemonic_word_count" to mnemonicWordCount.toString()
+                    "recovery_word_count" to mnemonicWordCount.toString()
                 )
             )
 
@@ -264,7 +264,7 @@ object AdamantineSensitiveActionFieldAllowlist {
 
     private val actionSpecificFields = mapOf(
         ADAMANTINE_ACTION_WIPE_WALLET to setOf("destructive", "requires_user_confirmation"),
-        ADAMANTINE_ACTION_RECOVER_WALLET to setOf("creation_timestamp", "mnemonic_word_count"),
+        ADAMANTINE_ACTION_RECOVER_WALLET to setOf("creation_timestamp", "recovery_word_count"),
         ADAMANTINE_ACTION_DIGIID_AUTHENTICATE to setOf("callback_host", "domain", "is_unsecure", "nonce_hash"),
         ADAMANTINE_ACTION_SIGN_MESSAGE to setOf("address_format", "message_hash", "message_length")
     )
