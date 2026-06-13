@@ -80,6 +80,18 @@ class AdamantineDecisionBoundaryTest {
     @Test
     fun `strict AdamantineOS allow response maps to wallet allow`() {
         val decision = AdamantineExecutionResponseMapper.fromExecutionResponseV2(
+            AdamantineTestPayloads.executionResponseV2()
+        )
+
+        assertEquals(AdamantineDecisionStatus.ALLOW, decision.status)
+        assertTrue(decision.allowed)
+        assertEquals(REASON_OK_ALLOW, decision.reasonId)
+        assertEquals("a".repeat(64), decision.contextHash)
+    }
+
+    @Test
+    fun `minimal old response shape now fails closed`() {
+        val decision = AdamantineExecutionResponseMapper.fromExecutionResponseV2(
             mapOf(
                 "v" to "execution_response_v2",
                 "status" to "allow",
@@ -89,20 +101,17 @@ class AdamantineDecisionBoundaryTest {
             )
         )
 
-        assertEquals(AdamantineDecisionStatus.ALLOW, decision.status)
-        assertTrue(decision.allowed)
-        assertEquals(REASON_OK_ALLOW, decision.reasonId)
+        assertEquals(AdamantineDecisionStatus.DENY, decision.status)
+        assertEquals(REASON_ADAMANTINEOS_RESPONSE_INVALID, decision.reasonId)
     }
 
     @Test
     fun `malformed allow response fails closed`() {
         val decision = AdamantineExecutionResponseMapper.fromExecutionResponseV2(
-            mapOf(
-                "v" to "execution_response_v2",
-                "status" to "allow",
-                "reason_id" to "DENY_POLICY",
-                "context_hash" to "b".repeat(64),
-                "decision" to mapOf("allowed" to true)
+            AdamantineTestPayloads.executionResponseV2(
+                status = "allow",
+                reasonId = "DENY_POLICY",
+                allowed = true
             )
         )
 
@@ -113,33 +122,45 @@ class AdamantineDecisionBoundaryTest {
     @Test
     fun `deny response maps to wallet deny`() {
         val decision = AdamantineExecutionResponseMapper.fromExecutionResponseV2(
-            mapOf(
-                "v" to "execution_response_v2",
-                "status" to "deny",
-                "reason_id" to "DENY_WALLET_POLICY_GATE",
-                "context_hash" to "c".repeat(64),
-                "decision" to mapOf("allowed" to false)
+            AdamantineTestPayloads.executionResponseV2(
+                status = "deny",
+                reasonId = "DENY_POLICY",
+                allowed = false,
+                protectionMode = "minimal",
+                artifacts = mapOf("error" to "policy denied")
             )
         )
 
         assertEquals(AdamantineDecisionStatus.DENY, decision.status)
         assertFalse(decision.allowed)
-        assertEquals("DENY_WALLET_POLICY_GATE", decision.reasonId)
+        assertEquals("DENY_POLICY", decision.reasonId)
+    }
+
+    @Test
+    fun `error response maps to wallet deny only with ERR reason`() {
+        val decision = AdamantineExecutionResponseMapper.fromExecutionResponseV2(
+            AdamantineTestPayloads.executionResponseV2(
+                status = "error",
+                reasonId = "ERR_INTERNAL",
+                allowed = false,
+                protectionMode = "legacy",
+                artifacts = mapOf("error" to "deterministic internal error")
+            )
+        )
+
+        assertEquals(AdamantineDecisionStatus.DENY, decision.status)
+        assertEquals("ERR_INTERNAL", decision.reasonId)
     }
 
     @Test
     fun `human review final policy state maps to require human confirmation`() {
         val decision = AdamantineExecutionResponseMapper.fromExecutionResponseV2(
-            mapOf(
-                "v" to "execution_response_v2",
-                "status" to "deny",
-                "reason_id" to "DENY_HUMAN_GATE",
-                "context_hash" to "d".repeat(64),
-                "decision" to mapOf("allowed" to false),
-                "artifacts" to mapOf(
-                    "final_policy" to mapOf(
-                        "state" to FINAL_POLICY_HUMAN_REVIEW_REQUIRED
-                    )
+            AdamantineTestPayloads.executionResponseV2(
+                status = "deny",
+                reasonId = "DENY_POLICY",
+                allowed = false,
+                artifacts = mapOf(
+                    "final_policy" to AdamantineTestPayloads.finalPolicyArtifact()
                 )
             )
         )
