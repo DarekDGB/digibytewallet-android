@@ -9,6 +9,16 @@ import io.digibyte.core.security.adamantine.AdamantineSendTransactionGateResult
 sealed class TxResult {
     data class Success(val txid: String) : TxResult()
     data class Error(val message: String) : TxResult()
+
+    data class AdamantineDenied(
+        val reasonId: String,
+        val message: String = "AdamantineOS denied send: $reasonId"
+    ) : TxResult()
+
+    data class AdamantineHumanConfirmationRequired(
+        val reasonId: String,
+        val message: String = "AdamantineOS requires human confirmation: $reasonId"
+    ) : TxResult()
 }
 
 interface TransactionNativeGateway {
@@ -40,7 +50,10 @@ class TransactionBuilder(
 ) {
     /**
      * Build, sign, and broadcast a transaction.
-     * Returns txid on success, error message on failure.
+     *
+     * AdamantineOS DENY / REQUIRE_HUMAN_CONFIRMATION states are returned as
+     * explicit domain states, not plain generic errors, so UI can show a clear
+     * protection state without adding a bypass path.
      */
     suspend fun sendTransaction(
         toAddress: String,
@@ -48,23 +61,17 @@ class TransactionBuilder(
         feePerKb: Long,
         spendableUtxos: List<UtxoEntity>
     ): TxResult {
-        // Validate address
         if (!nativeGateway.isValidAddress(toAddress)) {
             return TxResult.Error("Invalid DigiByte address")
         }
 
-        // Validate amount
         if (amountSatoshis <= 0) {
             return TxResult.Error("Amount must be positive")
         }
 
-        // Select coins (asset UTXOs are excluded by CoinSelector)
         val selection = coinSelector.selectCoins(spendableUtxos, amountSatoshis, feePerKb)
             ?: return TxResult.Error("Insufficient balance")
 
-        // AdamantineOS send-flow gate. If configured, this is the last stop
-        // before native create/sign/broadcast. It receives only safe metadata,
-        // never unsigned tx, signed tx, signatures, seed, or key material.
         val gateResult = adamantineSendGate.evaluate(
             AdamantineSendTransactionGateInput(
                 toAddress = toAddress,
@@ -83,27 +90,23 @@ class TransactionBuilder(
             is AdamantineSendTransactionGateResult.Allow -> Unit
 
             is AdamantineSendTransactionGateResult.Deny -> {
-                return TxResult.Error("AdamantineOS denied send: ${gateResult.reasonId}")
+                return TxResult.AdamantineDenied(gateResult.reasonId)
             }
 
             is AdamantineSendTransactionGateResult.RequireHumanConfirmation -> {
-                return TxResult.Error("AdamantineOS requires human confirmation: ${gateResult.reasonId}")
+                return TxResult.AdamantineHumanConfirmationRequired(gateResult.reasonId)
             }
         }
 
-        // Create unsigned transaction via C core
         val unsignedTx = nativeGateway.createTransaction(toAddress, amountSatoshis, feePerKb)
             ?: return TxResult.Error("Failed to create transaction")
 
-        // Sign via C core (uses RFC 6979 deterministic nonces)
         val signedTx = nativeGateway.signTransaction(unsignedTx)
             ?: return TxResult.Error("Failed to sign transaction")
 
-        // Broadcast via C core
         val txid = nativeGateway.publishTransaction(signedTx)
             ?: return TxResult.Error("Failed to broadcast transaction")
 
-        // Mark inputs as spent
         for (input in selection.inputs) {
             utxoManager.markSpent(input.txid, input.vout)
         }
