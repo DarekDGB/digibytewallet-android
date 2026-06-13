@@ -78,7 +78,7 @@ It only carries:
 
 ```text
 creation_timestamp
-mnemonic_word_count
+recovery_word_count
 ```
 
 ### Digi-ID authentication
