@@ -125,3 +125,25 @@ It should be reviewed as:
 - no signing authority
 - no network authority
 - no bypass of native wallet protection
+
+## Strict response validation
+
+A future live runtime connector must not map an AdamantineOS response directly into wallet execution state until the response passes the frozen `execution_response_v2` shape.
+
+The local validator rejects:
+
+- unknown top-level fields
+- missing required fields
+- unsupported response versions
+- non-registry `reason_id` values
+- non-lowercase or non-64-hex context hashes
+- status / `decision.allowed` mismatches
+- `allow` responses without `OK_ALLOW`
+- `deny` responses using `OK_ALLOW`
+- `error` responses without `ERR_*` reason IDs
+- unknown decision, gate, evidence, timebox, nonce, or policy fields
+- unknown artifact keys
+- artifacts or metrics containing wallet-material field names
+- metrics that are not deterministic integer counts
+
+The adapter remains fail-closed: if validation fails, the wallet receives `DENY_ADAMANTINEOS_RESPONSE_INVALID`.
