@@ -6,6 +6,9 @@ import io.digibyte.core.bridge.NativeBridge
 import io.digibyte.core.model.SyncState
 import io.digibyte.core.security.EncryptedData
 import io.digibyte.core.security.KeyStoreManager
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGate
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGateResult
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionInput
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -19,7 +22,9 @@ sealed class WalletState {
 class WalletManager(
     private val context: Context,
     private val keyStoreManager: KeyStoreManager,
-    private val utxoManager: UtxoManager
+    private val utxoManager: UtxoManager,
+    private val adamantineSensitiveActionGate: AdamantineSensitiveActionGate =
+        AdamantineSensitiveActionGate.notConfigured()
 ) {
     private val _walletState = MutableStateFlow<WalletState>(WalletState.NoWallet)
     val walletState: StateFlow<WalletState> = _walletState.asStateFlow()
@@ -63,6 +68,16 @@ class WalletManager(
      * Encrypts and persists the phrase to disk.
      */
     fun recoverWallet(mnemonic: String, creationTimestamp: Long): Boolean {
+        val recoveryGateResult = adamantineSensitiveActionGate.evaluate(
+            AdamantineSensitiveActionInput.recoverWallet(
+                creationTimestamp = creationTimestamp,
+                mnemonicWordCount = mnemonic.safeRecoveryWordCount()
+            )
+        )
+        if (!recoveryGateResult.allowsSensitiveExecution()) {
+            return false
+        }
+
         val success = NativeBridge.recoverWallet(mnemonic, creationTimestamp)
         if (success) {
             persistSeed(mnemonic)
@@ -184,6 +199,13 @@ class WalletManager(
      * Wipe the wallet — delete everything.
      */
     suspend fun wipeWallet() {
+        val wipeGateResult = adamantineSensitiveActionGate.evaluate(
+            AdamantineSensitiveActionInput.wipeWallet()
+        )
+        if (!wipeGateResult.allowsSensitiveExecution()) {
+            throw IllegalStateException(wipeGateResult.blockedSensitiveActionMessage("wipe wallet"))
+        }
+
         NativeBridge.lockSession()
         // Clear seed ciphertext FIRST — if process dies after this but before
         // key deletion, hasSavedWallet()=false so no orphaned state.
@@ -254,3 +276,18 @@ class WalletManager(
     private fun hexToBytes(hex: String): ByteArray =
         hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
 }
+
+private fun AdamantineSensitiveActionGateResult.allowsSensitiveExecution(): Boolean =
+    this is AdamantineSensitiveActionGateResult.Allow
+
+private fun AdamantineSensitiveActionGateResult.blockedSensitiveActionMessage(actionName: String): String {
+    val reason = when (this) {
+        is AdamantineSensitiveActionGateResult.Deny -> reasonId
+        is AdamantineSensitiveActionGateResult.RequireHumanConfirmation -> reasonId
+        is AdamantineSensitiveActionGateResult.Allow -> reasonId
+    }
+    return "AdamantineOS blocked $actionName: $reason"
+}
+
+private fun String.safeRecoveryWordCount(): Int =
+    trim().split("\\s+".toRegex()).count { it.isNotBlank() }
