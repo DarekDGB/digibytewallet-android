@@ -13,6 +13,9 @@ import io.digibyte.core.hub.ConnectionState
 import io.digibyte.core.hub.HubWebSocket
 import io.digibyte.core.hub.UserInfo
 import io.digibyte.core.hub.WebSocketEvent
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGate
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGateResult
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionInput
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -26,7 +29,8 @@ import javax.inject.Inject
 class ChatViewModel @Inject constructor(
     private val digiScopeClient: DigiScopeClient,
     private val hubWebSocket: HubWebSocket,
-    private val cachedMessageDao: CachedMessageDao
+    private val cachedMessageDao: CachedMessageDao,
+    private val adamantineSensitiveActionGate: AdamantineSensitiveActionGate
 ) : ViewModel() {
 
     // ── Channels ──────────────────────────────────────────────────────────
@@ -219,6 +223,15 @@ class ChatViewModel @Inject constructor(
         if (content.isBlank()) return
         _sendError.value = null
         val channelId = selectedChannel.value
+
+        adamantineSensitiveActionGate.blockReasonForMessageSigning(
+            message = content,
+            purpose = "hub_chat_message"
+        )?.let { reason ->
+            _sendError.value = reason
+            return
+        }
+
         // Sign content — returns null when native stub not available
         val signature = try {
             NativeBridge.signMessage(content, 1) ?: ""
@@ -261,3 +274,23 @@ private fun CachedMessageEntity.toChatMessage() = ChatMessage(
     timestamp = timestamp,
     signature = signature
 )
+
+private fun AdamantineSensitiveActionGate.blockReasonForMessageSigning(
+    message: String,
+    purpose: String
+): String? {
+    val result = evaluate(
+        AdamantineSensitiveActionInput.messageSigning(
+            message = message,
+            purpose = purpose,
+            addressFormat = 1
+        )
+    )
+    return when (result) {
+        is AdamantineSensitiveActionGateResult.Allow -> null
+        is AdamantineSensitiveActionGateResult.Deny ->
+            "AdamantineOS denied message signing: ${result.reasonId}"
+        is AdamantineSensitiveActionGateResult.RequireHumanConfirmation ->
+            "AdamantineOS requires human confirmation before message signing: ${result.reasonId}"
+    }
+}
