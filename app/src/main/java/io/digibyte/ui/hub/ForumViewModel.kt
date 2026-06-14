@@ -8,6 +8,9 @@ import io.digibyte.core.digiscope.DigiScopeClient
 import io.digibyte.core.hub.ForumThread
 import io.digibyte.core.hub.Reply
 import io.digibyte.core.hub.ThreadDetail
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGate
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGateResult
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionInput
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -38,7 +41,8 @@ sealed class ThreadDetailState {
 
 @HiltViewModel
 class ForumViewModel @Inject constructor(
-    private val digiScopeClient: DigiScopeClient
+    private val digiScopeClient: DigiScopeClient,
+    private val adamantineSensitiveActionGate: AdamantineSensitiveActionGate
 ) : ViewModel() {
 
     // ── Thread list state ─────────────────────────────────────────────────
@@ -132,6 +136,15 @@ class ForumViewModel @Inject constructor(
 
         viewModelScope.launch {
             val signContent = "$title\n$content"
+            adamantineSensitiveActionGate.blockReasonForForumSigning(
+                message = signContent,
+                purpose = "hub_forum_create_thread"
+            )?.let { reason ->
+                _isCreating.value = false
+                _createError.value = reason
+                return@launch
+            }
+
             val signature = try {
                 NativeBridge.signMessage(signContent, 1) ?: ""
             } catch (e: Exception) {
@@ -170,6 +183,15 @@ class ForumViewModel @Inject constructor(
         _isReplying.value = true
 
         viewModelScope.launch {
+            adamantineSensitiveActionGate.blockReasonForForumSigning(
+                message = content,
+                purpose = "hub_forum_reply"
+            )?.let { reason ->
+                _isReplying.value = false
+                _replyError.value = reason
+                return@launch
+            }
+
             val signature = try {
                 NativeBridge.signMessage(content, 1) ?: ""
             } catch (e: Exception) {
@@ -204,5 +226,25 @@ class ForumViewModel @Inject constructor(
                 else -> loadThreads()
             }
         }
+    }
+}
+
+private fun AdamantineSensitiveActionGate.blockReasonForForumSigning(
+    message: String,
+    purpose: String
+): String? {
+    val result = evaluate(
+        AdamantineSensitiveActionInput.messageSigning(
+            message = message,
+            purpose = purpose,
+            addressFormat = 1
+        )
+    )
+    return when (result) {
+        is AdamantineSensitiveActionGateResult.Allow -> null
+        is AdamantineSensitiveActionGateResult.Deny ->
+            "AdamantineOS denied message signing: ${result.reasonId}"
+        is AdamantineSensitiveActionGateResult.RequireHumanConfirmation ->
+            "AdamantineOS requires human confirmation before message signing: ${result.reasonId}"
     }
 }
