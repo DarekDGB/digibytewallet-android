@@ -17,6 +17,7 @@ import io.digibyte.core.digiid.DigiIdManager
 import io.digibyte.core.ipfs.AssetMetadataService
 import io.digibyte.core.ipfs.IpfsClient
 import io.digibyte.core.security.*
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGate
 import okhttp3.OkHttpClient
 import java.security.SecureRandom
 import javax.inject.Singleton
@@ -33,6 +34,10 @@ object AppModule {
 
     @Provides @Singleton
     fun providePinManager(@ApplicationContext context: Context): PinManager = PinManager(context)
+
+    @Provides @Singleton
+    fun provideAdamantineSensitiveActionGate(): AdamantineSensitiveActionGate =
+        AdamantineSensitiveActionGate.notConfigured()
 
     @Provides @Singleton
     fun provideBiometricAuth(): BiometricAuth = BiometricAuth()
@@ -107,8 +112,12 @@ object AppModule {
         TransactionBuilder(cs, um)
 
     @Provides @Singleton
-    fun provideWalletManager(@ApplicationContext context: Context, ksm: KeyStoreManager, um: UtxoManager): WalletManager =
-        WalletManager(context, ksm, um)
+    fun provideWalletManager(
+        @ApplicationContext context: Context,
+        ksm: KeyStoreManager,
+        um: UtxoManager,
+        adamantineSensitiveActionGate: AdamantineSensitiveActionGate
+    ): WalletManager = WalletManager(context, ksm, um, adamantineSensitiveActionGate)
 
     @Provides @Singleton
     fun providePriceProvider(dao: PriceCacheDao, client: OkHttpClient): PriceProvider =
@@ -125,8 +134,12 @@ object AppModule {
         AssetMetadataService(ipfsClient, dao)
 
     @Provides @Singleton
-    fun provideDigiIdManager(client: OkHttpClient, historyDao: DigiIdHistoryDao, digiScopeClient: DigiScopeClient): DigiIdManager =
-        DigiIdManager(client, historyDao, digiScopeClient)
+    fun provideDigiIdManager(
+        client: OkHttpClient,
+        historyDao: DigiIdHistoryDao,
+        digiScopeClient: DigiScopeClient,
+        adamantineSensitiveActionGate: AdamantineSensitiveActionGate
+    ): DigiIdManager = DigiIdManager(client, historyDao, digiScopeClient, adamantineSensitiveActionGate)
 
     @Provides @Singleton
     fun provideDigiScopeClient(
