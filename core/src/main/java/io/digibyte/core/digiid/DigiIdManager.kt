@@ -7,6 +7,9 @@ import io.digibyte.core.db.entity.DigiIdHistoryEntity
 import io.digibyte.core.digiscope.DigiScopeClient
 import io.digibyte.core.model.DigiIdRequest
 import io.digibyte.core.model.DigiIdResult
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGate
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionGateResult
+import io.digibyte.core.security.adamantine.AdamantineSensitiveActionInput
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -20,7 +23,9 @@ private const val TAG = "DigiIdManager"
 class DigiIdManager(
     private val httpClient: OkHttpClient,
     private val historyDao: DigiIdHistoryDao,
-    private val digiScopeClient: DigiScopeClient
+    private val digiScopeClient: DigiScopeClient,
+    private val adamantineSensitiveActionGate: AdamantineSensitiveActionGate =
+        AdamantineSensitiveActionGate.notConfigured()
 ) {
     suspend fun authenticate(request: DigiIdRequest): DigiIdResult = withContext(Dispatchers.IO) {
         try {
@@ -43,6 +48,30 @@ class DigiIdManager(
             if (request.isUnsecure) {
                 Log.w(TAG, "Rejecting insecure (HTTP) Digi-ID callback to ${request.domain}")
                 return@withContext DigiIdResult.Error(1, "Insecure (HTTP) authentication not allowed")
+            }
+
+            val adamantineGateResult = adamantineSensitiveActionGate.evaluate(
+                AdamantineSensitiveActionInput.digiIdAuthenticate(
+                    domain = request.domain,
+                    callbackHost = callbackHost,
+                    nonce = request.nonce,
+                    isUnsecure = request.isUnsecure
+                )
+            )
+            when (adamantineGateResult) {
+                is AdamantineSensitiveActionGateResult.Deny -> {
+                    return@withContext DigiIdResult.Error(
+                        1,
+                        "AdamantineOS denied Digi-ID authentication: ${adamantineGateResult.reasonId}"
+                    )
+                }
+                is AdamantineSensitiveActionGateResult.RequireHumanConfirmation -> {
+                    return@withContext DigiIdResult.Error(
+                        1,
+                        "AdamantineOS requires human confirmation for Digi-ID authentication: ${adamantineGateResult.reasonId}"
+                    )
+                }
+                is AdamantineSensitiveActionGateResult.Allow -> Unit
             }
 
             // Sign the original digiid:// URI (includes nonce) with the wallet's first BIP32 key.
